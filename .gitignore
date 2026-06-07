@@ -1,0 +1,28 @@
+# Runtime / personal data (not source code)
+downloads/
+app.log
+settings.json
+history.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# FFmpeg binaries (~60MB — user must download separately)
+bin/
+
+# Build artifacts
+dist/
+build/
+*.spec
+
+# OS files
+.DS_Store
+Thumbs.db
