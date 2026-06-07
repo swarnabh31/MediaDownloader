@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "media-downloader"
+version = "1.0.0"
+description = "Clean, open-source desktop app to download videos & audio from 1800+ sites — no ads, no malware."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Swarnabh", email = "swarnabh31@gmail.com"},
+]
+keywords = [
+    "video-downloader",
+    "media-downloader",
+    "yt-dlp",
+    "desktop-app",
+    "ffmpeg",
+    "curl-cffi",
+    "flet",
+    "offline-viewing",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Multimedia :: Video",
+]
+
+dependencies = [
+    "flet>=0.85",
+    "yt-dlp>=2026.1",
+    "curl-cffi>=0.10",
+    "plyer",
+]
+
+[project.urls]
+Homepage = "https://github.com/swarnabh31/VideoDownloader"
+Repository = "https://github.com/swarnabh31/VideoDownloader.git"
+Issues = "https://github.com/swarnabh31/VideoDownloader/issues"
+
+[tool.setuptools.packages.find]
+include = ["core*", "ui*"]
