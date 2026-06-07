@@ -1,4 +1,3 @@
 flet
 yt-dlp
 plyer
-pyinstaller
