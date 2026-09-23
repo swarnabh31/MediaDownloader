@@ -1,51 +1,87 @@
+import logging
 import os
+import re
 import sys
 import yt_dlp
 
-# Try to enable curl-cffi as the HTTP backend if available
-try:
-    from curl_cffi import requests as cc_requests
-    # Monkey-patch yt-dlp's default backend to use curl_cffi
-    _orig_init = yt_dlp.networking._adapter.Registry.__init__
+log = logging.getLogger("downloader")
 
-    def _new_init(self):
-        _orig_init(self)
-        # Register curl_cffi adapter if not already registered
-        from yt_dlp.networking.curl import CurlAdapter
-        from yt_dlp.networking.helper import AdapterName
-        self.register_adapter('curl', CurlAdapter)
-    
-    yt_dlp.networking._adapter.Registry.__init__ = _new_init
+# Ensure Deno is on PATH so yt-dlp can use it as a JS runtime
+_deno_path = os.path.join(os.environ.get("USERPROFILE", ""), ".deno", "bin")
+if _deno_path and os.path.isdir(_deno_path) and _deno_path not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + _deno_path
+
+# Use yt-dlp's native curl_cffi backend when available (TLS fingerprint
+# impersonation, useful for Vimeo / Dailymotion / sites that block default
+# urllib). Set to the string "curl_cffi" so yt-dlp drives the adapter itself.
+try:
+    import curl_cffi  # noqa: F401
     CURL_CFFI_AVAILABLE = True
-except Exception:
+except Exception as _curl_cffi_err:
     CURL_CFFI_AVAILABLE = False
+    # Silently falling back here used to hide the real cause of 403s on
+    # Instagram/Dailymotion/etc (they block plain urllib via TLS fingerprint
+    # checks). Log it loudly so it shows up in app.log instead of looking
+    # like an unexplained 403.
+    log.warning(
+        "curl_cffi not available (%s) - falling back to urllib. Sites that "
+        "require browser TLS fingerprinting (Instagram, Dailymotion, etc.) "
+        "are likely to return 403 until `pip install curl-cffi` succeeds "
+        "in this environment.", _curl_cffi_err,
+    )
+
+# yt-dlp itself reports its running version; log it once at import time so a
+# stale bundled/venv copy is obvious in app.log rather than a mystery 403.
+log.info("Using yt-dlp version %s", getattr(yt_dlp.version, "__version__", "unknown"))
+if getattr(yt_dlp.version, "__version__", "0") < "2026.08.19":
+    log.warning(
+        "yt-dlp version is older than 2026.08.19, which fixed a YouTube "
+        "`android_vr` client bug that caused '403 Forbidden' on every "
+        "download. Run `pip install -U yt-dlp` (or update however this "
+        "app's dependencies were installed)."
+    )
 
 
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 FFMPEG_BIN_PATH = os.path.join(BASE_DIR, "bin")
 
+_FORBIDDEN_HINT = (
+    " YouTube is blocking this IP. Fixes: (1) add login cookies in Settings, "
+    "(2) set a proxy, (3) switch networks (restart router / mobile hotspot)."
+)
+_FORBIDDEN_RE = re.compile(r"(403|forbidden|unavailable for legal reasons|geo.restricted)", re.IGNORECASE)
+
+
+def annotate_error(err):
+    """Return the error string, appending a fix hint when it looks like an IP-level 403 block."""
+    msg = str(err)
+    if _FORBIDDEN_RE.search(msg):
+        return msg.rstrip(" .") + _FORBIDDEN_HINT
+    return msg
+
 
 class DownloaderEngine:
-    def __init__(self, ffmpeg_path=None, output_dir="downloads", proxy="", cookiefile=""):
+    def __init__(self, ffmpeg_path=None, output_dir="downloads", proxy="", cookiefile="", cookies_from_browser=""):
         self.ffmpeg_path = ffmpeg_path if ffmpeg_path else FFMPEG_BIN_PATH
         self.output_dir = output_dir
         self.proxy = proxy or ""
         self.cookiefile = cookiefile or ""
+        self.cookies_from_browser = cookies_from_browser or ""
 
-    def update_config(self, output_dir=None, proxy=None, cookiefile=None):
+    def update_config(self, output_dir=None, proxy=None, cookiefile=None, cookies_from_browser=None):
         if output_dir is not None:
             self.output_dir = output_dir
         if proxy is not None:
             self.proxy = proxy
         if cookiefile is not None:
             self.cookiefile = cookiefile
+        if cookies_from_browser is not None:
+            self.cookies_from_browser = cookies_from_browser
 
-    def get_download_options(self, quality, progress_hook=None, format_id=None):
+    def _base_opts(self, quiet=False):
         opts = {
-            "progress_hooks": [progress_hook] if progress_hook else [],
             "ffmpeg_location": self.ffmpeg_path,
-            "outtmpl": os.path.join(self.output_dir, "%(title)s.%(ext)s"),
-            "noplaylist": True,
+            "remote_components": {"ejs:github"},
             "user_agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -59,180 +95,30 @@ class DownloaderEngine:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         }
-
+        if quiet:
+            opts.update({"quiet": True, "no_warnings": True, "skip_download": True})
         if CURL_CFFI_AVAILABLE:
-            opts["http_client"] = _create_curl_http_client()
-
+            opts["http_client"] = "curl_cffi"
         if self.proxy:
             opts["proxy"] = self.proxy
+        # An explicitly chosen cookies.txt file wins if set. Otherwise, if the
+        # user picked a browser, read cookies live from that browser's own
+        # cookie store on every run - this is what lets Instagram/etc logins
+        # keep working automatically without the user re-exporting a file
+        # every time the session rotates.
         if self.cookiefile and os.path.exists(self.cookiefile):
             opts["cookiefile"] = self.cookiefile
-
-        if format_id:
-            opts["format"] = format_id
-        elif quality == "Audio":
-            opts.update({
-                "format": "bestaudio/best",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-            })
-        elif quality == "1080p":
-            opts.update({
-                "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
-                "merge_output_format": "mp4",
-            })
-        elif quality == "1440p":
-            opts.update({
-                "format": "bestvideo[height<=1440]+bestaudio/best[height<=1440]",
-                "merge_output_format": "mp4",
-            })
-        elif quality == "2160p":
-            opts.update({
-                "format": "bestvideo[height<=2160]+bestaudio/best[height<=2160]",
-                "merge_output_format": "mp4",
-            })
-        else:
-            opts.update({
-                "format": "bestvideo[height<=720]+bestaudio/best[height<=720]",
-                "merge_output_format": "mp4",
-            })
-
+        elif self.cookies_from_browser:
+            opts["cookiesfrombrowser"] = (self.cookies_from_browser, None, None, None)
         return opts
 
-
-def _create_curl_http_client():
-    """Create an HTTP client for yt-dlp that uses curl_cffi under the hood.
-    
-    This is a workaround to enable TLS fingerprint impersonation with Vimeo,
-    Dailymotion, and other platforms that block default urllib3 requests.
-    """
-    from curl_cffi import BrowserType
-    
-    # Try Chrome 125 or fallback to closest available
-    TARGETS = ['chrome124', 'chrome123', 'chrome120', 'chrome119']
-    target = None
-    for t in TARGETS:
-        try:
-            _check_browser_type(t)
-            target = t
-            break
-        except Exception:
-            continue
-    
-    if target is None:
-        # List all available Chrome targets to help debug
-        all_chrome = [bt.value for bt in BrowserType if 'chrome' in str(bt).lower()]
-        raise RuntimeError(
-            f"No Chrome impersonation target found. Available: {all_chrome}"
-        )
-    
-    def http_client_func(url, headers, **kwargs):
-        import yt_dlp.utils
-        
-        # Use curl_cffi to make the request with full TLS fingerprinting
-        resp = cc_requests.get(
-            str(url),
-            headers=headers,
-            impersonate=target,
-            allow_redirects=True,
-            timeout=30,
-        )
-        
-        # Wrap in yt-dlp compatible response object
-        from yt_dlp.utils import write_string
-        
-        # Build a response that looks like requests.Response to yt-dlp's networking layer
-        class _CurlResponse:
-            def __init__(self, resp):
-                self._resp = resp
-            
-            @property
-            def url(self):
-                return str(self._resp.url)
-            
-            @property
-            def status_code(self):
-                return self._resp.status_code
-            
-            @property
-            def headers(self):
-                return yt_dlp.utils.canned_headers()  # fallback
-            
-            def raise_for_status(self):
-                if not 200 <= self.status_code < 400:
-                    from yt_dlp.utils import extractarser_error
-                    raise yt_dlp.utils.DownloadError(
-                        f"HTTP Error {self.status_code}: {self._resp.reason}", 
-                        self.status_code
-                    )
-            
-            def read(self):
-                return self._resp.content
-            
-            def iter_content(self, chunk_size=None):
-                yield self._resp.content
-            
-            def text(self):
-                return self._resp.text
-        
-        return _CurlResponse(resp)
-    
-    return http_client_func
-
-
-def _check_browser_type(name):
-    from curl_cffi import BrowserType
-    for bt in BrowserType:
-        if bt.value == name:
-            return True
-    raise KeyError(f"BrowserType {name} not found")
-
-
-class DownloaderEngine:
-    def __init__(self, ffmpeg_path=None, output_dir="downloads", proxy="", cookiefile=""):
-        self.ffmpeg_path = ffmpeg_path if ffmpeg_path else FFMPEG_BIN_PATH
-        self.output_dir = output_dir
-        self.proxy = proxy or ""
-        self.cookiefile = cookiefile or ""
-
-    def update_config(self, output_dir=None, proxy=None, cookiefile=None):
-        if output_dir is not None:
-            self.output_dir = output_dir
-        if proxy is not None:
-            self.proxy = proxy
-        if cookiefile is not None:
-            self.cookiefile = cookiefile
-
     def get_download_options(self, quality, progress_hook=None, format_id=None):
         opts = {
             "progress_hooks": [progress_hook] if progress_hook else [],
-            "ffmpeg_location": self.ffmpeg_path,
             "outtmpl": os.path.join(self.output_dir, "%(title)s.%(ext)s"),
             "noplaylist": True,
-            "user_agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-            ),
-            "http_headers": {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-                ),
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
         }
-
-        if CURL_CFFI_AVAILABLE:
-            opts["http_client"] = _create_curl_http_client()
-
-        if self.proxy:
-            opts["proxy"] = self.proxy
-        if self.cookiefile and os.path.exists(self.cookiefile):
-            opts["cookiefile"] = self.cookiefile
+        opts.update(self._base_opts())
 
         if format_id:
             opts["format"] = format_id
@@ -247,40 +133,29 @@ class DownloaderEngine:
             })
         elif quality == "1080p":
             opts.update({
-                "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+                "format": "bestvideo[height<=?1080]+bestaudio/best[height<=?1080]/best",
                 "merge_output_format": "mp4",
             })
         elif quality == "1440p":
             opts.update({
-                "format": "bestvideo[height<=1440]+bestaudio/best[height<=1440]",
+                "format": "bestvideo[height<=?1440]+bestaudio/best[height<=?1440]/best",
                 "merge_output_format": "mp4",
             })
         elif quality == "2160p":
             opts.update({
-                "format": "bestvideo[height<=2160]+bestaudio/best[height<=2160]",
+                "format": "bestvideo[height<=?2160]+bestaudio/best[height<=?2160]/best",
                 "merge_output_format": "mp4",
             })
         else:
             opts.update({
-                "format": "bestvideo[height<=720]+bestaudio/best[height<=720]",
+                "format": "bestvideo[height<=?720]+bestaudio/best[height<=?720]/best",
                 "merge_output_format": "mp4",
             })
 
         return opts
 
     def fetch_metadata(self, url):
-        opts = {
-            "quiet": True,
-            "skip_download": True,
-            "no_warnings": True,
-            "ffmpeg_location": self.ffmpeg_path,
-        }
-        if CURL_CFFI_AVAILABLE:
-            opts["http_client"] = _create_curl_http_client()
-        if self.proxy:
-            opts["proxy"] = self.proxy
-        if self.cookiefile and os.path.exists(self.cookiefile):
-            opts["cookiefile"] = self.cookiefile
+        opts = self._base_opts(quiet=True)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             return {
@@ -293,17 +168,7 @@ class DownloaderEngine:
             }
 
     def fetch_formats(self, url):
-        opts = {
-            "quiet": True,
-            "skip_download": True,
-            "ffmpeg_location": self.ffmpeg_path,
-        }
-        if CURL_CFFI_AVAILABLE:
-            opts["http_client"] = _create_curl_http_client()
-        if self.proxy:
-            opts["proxy"] = self.proxy
-        if self.cookiefile and os.path.exists(self.cookiefile):
-            opts["cookiefile"] = self.cookiefile
+        opts = self._base_opts(quiet=True)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             formats = []

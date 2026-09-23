@@ -1,7 +1,7 @@
 import flet as ft
 
 from core import history_manager
-from ui.components import build_app_bar
+from ui.components import build_app_bar, snack
 
 
 class HistoryView(ft.View):
@@ -81,7 +81,8 @@ class HistoryView(ft.View):
 
     def _build(self):
         self.appbar = build_app_bar(
-            self._page, "Download History", self._page.route, self.app_state.navigate
+            self._page, "Download History", self._page.route, self.app_state.navigate,
+            on_back=lambda: self.app_state.navigate("/"),
         )
         self.controls = [self._content]
 
@@ -153,5 +154,4 @@ class HistoryView(ft.View):
             self._show_snack(url[:80])
 
     def _show_snack(self, msg):
-        if self.page is not None and hasattr(self.page, "show_snack_bar"):
-            self.page.show_snack_bar(ft.SnackBar(content=ft.Text(msg)))
+        snack(self.page, msg)

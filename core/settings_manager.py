@@ -10,6 +10,7 @@ DEFAULTS = {
     "max_concurrent": 1,
     "proxy": "",
     "cookiefile": "",
+    "cookies_from_browser": "",
     "concurrent_downloads": 1,
 }
 

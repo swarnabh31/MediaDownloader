@@ -39,6 +39,7 @@ class AppState:
             output_dir=self.settings.get("output_dir", "downloads"),
             proxy=self.settings.get("proxy", ""),
             cookiefile=self.settings.get("cookiefile", ""),
+            cookies_from_browser=self.settings.get("cookies_from_browser", ""),
         )
         self.queue = QueueManager(
             engine=self.engine,
@@ -56,11 +57,17 @@ class AppState:
                 log.exception("queue update callback failed")
 
     def navigate(self, route):
-        """Navigate to a route (called from views)."""
+        """Navigate to a route (called from views).
+
+        page.push_route() is an async coroutine method in current Flet
+        versions. Calling it directly from a sync on_click handler just
+        creates a coroutine that is never awaited/executed - no exception,
+        no navigation, nothing visibly happens. page.run_task() schedules
+        it on Flet's event loop correctly from sync code.
+        """
         if self.page is not None:
             try:
-                # In Flet desktop mode, push_route is sync. Use it directly.
-                self.page.push_route(route)
+                self.page.run_task(self.page.push_route, route)
             except Exception as ex:
                 log.error("navigate failed: %s", ex)
 
@@ -83,6 +90,7 @@ class AppState:
             output_dir=settings.get("output_dir", "downloads"),
             proxy=settings.get("proxy", ""),
             cookiefile=settings.get("cookiefile", ""),
+            cookies_from_browser=settings.get("cookies_from_browser", ""),
         )
         # Theme is handled separately — page.theme_mode doesn't change mid-session in Flet desktop
         if self._main_view is not None:
@@ -93,6 +101,12 @@ class AppState:
             except Exception:
                 pass
         if self.page is not None:
+            try:
+                self.page.theme_mode = (
+                    ft.ThemeMode.DARK if settings.get("theme") == "dark" else ft.ThemeMode.LIGHT
+                )
+            except Exception:
+                pass
             self.page.update()
 
     def toggle_theme(self):
@@ -150,7 +164,7 @@ def main(page: ft.Page):
         if len(page.views) > 1:
             page.views.pop()
             top = page.views[-1]
-            page.push_route(top.route)
+            page.run_task(page.push_route, top.route)
         else:
             # Only one view — re-add root
             root_view = app_state.get_or_create_view("/")
@@ -173,9 +187,9 @@ def main(page: ft.Page):
         elif hasattr(e, 'ctrl') and e.ctrl and (e.key == "P" or e.key == "p"):
             active._on_preview_click(None)
         elif hasattr(e, 'ctrl') and e.ctrl and (e.key == "H" or e.key == "h"):
-            page.push_route("/history")
+            page.run_task(page.push_route, "/history")
         elif hasattr(e, 'ctrl') and e.ctrl and (e.key == "S" or e.key == "s"):
-            page.push_route("/settings")
+            page.run_task(page.push_route, "/settings")
 
     page.on_keyboard_event = on_keyboard
 

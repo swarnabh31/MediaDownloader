@@ -1,4 +1,4 @@
 flet
-yt-dlp
+yt-dlp>=2026.8.19
 curl-cffi
 plyer

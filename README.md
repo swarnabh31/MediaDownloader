@@ -27,6 +27,7 @@ Powered by **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** under the hood, wrappe
 |---|---|
 | **Python** | 3.9+ |
 | **FFmpeg** | Required for video merging and audio extraction (see install below) |
+| **Deno** | Required by yt-dlp for YouTube JS extraction (see install below) |
 
 ---
 
@@ -44,13 +45,42 @@ file_downloader/
     └── ffprobe.exe
 ```
 
-### 2. Install Dependencies
+### 2. Install Deno (Required for YouTube)
+
+yt-dlp now requires a JavaScript runtime to extract YouTube videos. **Deno is the default runtime** — if it's missing, you'll get errors like `No supported JavaScript runtime could be found` and YouTube downloads will fail.
+
+**Windows (PowerShell):**
+```powershell
+irm https://deno.land/install.ps1 | iex
+```
+This installs Deno to `%LOCALAPPDATA\deno`. Ensure it's in your PATH by running:
+```powershell
+$env:Path = "$env:LOCALAPPDATA\deno;$env:Path"
+```
+To make this permanent, go to **Settings > Environment Variables** and add `%LOCALAPPDATA%\deno` to your user `PATH`, or run:
+```powershell
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;%LOCALAPPDATA%\deno", "User")
+```
+Then verify:
+```powershell
+deno --version
+```
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://deno.land/install.sh | sh
+```
+(Add Deno to PATH as instructed during installation.)
+
+More details: [yt-dlp JavaScript Runtimes](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
+
+### 3. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run
+### 4. Run
 
 ```bash
 python main.py
@@ -107,6 +137,14 @@ file_downloader/
 
 ## 🔧 Troubleshooting
 
+### "This video is not available" on YouTube
+
+This usually means yt-dlp can't parse the YouTube page. Make sure **Deno** is installed and in your PATH (see Requirements above). Verify:
+```powershell
+deno --version
+```
+If Deno is installed but still failing, restart your terminal to pick up PATH changes.
+
 ### "Connection aborted" or "Unable to download JSON metadata"
 
 The app uses **curl_cffi** browser impersonation to bypass platform blocks. If some sites still fail:
@@ -152,6 +190,7 @@ By default, files are saved in the `downloads/` folder inside the project direct
 | **[Flet](https://flet.dev/)** | Desktop GUI framework (Flutter-based Python) |
 | **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** | Download engine (1800+ site support) |
 | **[curl_cffi](https://github.com/lexiforest/curl_cffi)** | TLS fingerprinting for browser impersonation |
+| **Deno** | JavaScript runtime required by yt-dlp for YouTube extraction |
 | **FFmpeg** | Video merging & audio codec support |
 
 ---

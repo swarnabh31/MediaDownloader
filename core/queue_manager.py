@@ -1,8 +1,23 @@
 import queue
+import re
 import threading
+import yt_dlp.utils as ytdl_utils
 import logging
 
+from core.downloader_engine import annotate_error
+
 log = logging.getLogger("downloader")
+
+
+def _classify_error(e, item):
+    msg = str(e).lower()
+    if "cancelled" in msg or (isinstance(e, ytdl_utils.DownloadError) and item.get("cancelled")):
+        item["status"] = "cancelled"
+        item["error"] = "Cancelled by user"
+        return
+    item["status"] = "error"
+    item["error"] = annotate_error(e)[:300]
+    item["blocked_403"] = bool(re.search(r"(403|forbidden|geo.restricted)", str(e), re.IGNORECASE))
 
 
 class QueueManager:
@@ -33,6 +48,8 @@ class QueueManager:
                 "speed": "",
                 "eta": "",
                 "error": "",
+                "cancelled": False,
+                "blocked_403": False,
             }
             self._items.append(item)
         self._queue.put(item)
@@ -42,6 +59,14 @@ class QueueManager:
     def remove(self, item_id):
         with self._lock:
             self._items = [i for i in self._items if i["id"] != item_id]
+
+    def cancel_item(self, item_id):
+        """Mark an item as cancelled so the progress hook aborts the download."""
+        with self._lock:
+            for i in self._items:
+                if i["id"] == item_id and i["status"] in ("queued", "downloading", "processing"):
+                    i["cancelled"] = True
+                    break
 
     def clear_finished(self):
         with self._lock:
@@ -61,9 +86,8 @@ class QueueManager:
                 self._download_item(item)
             except Exception as e:
                 log.exception("queue worker error")
-                item["status"] = "error"
-                item["error"] = str(e)
-                self._on_item_update(item, "error")
+                _classify_error(e, item)
+                self._on_item_update(item, item["status"])
             finally:
                 self._queue.task_done()
 
@@ -73,13 +97,21 @@ class QueueManager:
 
         def hook(d):
             if d.get("status") == "downloading":
+                # Check cancellation
+                if item.get("cancelled"):
+                    raise ytdl_utils.DownloadError("Download cancelled by user")
+                # Use correct yt-dlp progress dict keys
                 try:
-                    pct = d.get("_percent_str", "0%").replace("%", "").strip()
+                    pct = d.get("percent", 0.0)
                     item["progress"] = float(pct) / 100.0
                 except (ValueError, TypeError):
                     pass
-                item["speed"] = d.get("_speed_str", "").strip()
-                item["eta"] = d.get("_eta_str", "").strip()
+                speed = d.get("speed")
+                if speed is not None:
+                    item["speed"] = ytdl_utils.format_bytes(speed)
+                eta = d.get("eta")
+                if eta is not None:
+                    item["eta"] = str(eta) + "s"
                 self._on_item_update(item, "downloading")
             elif d.get("status") == "finished":
                 item["progress"] = 1.0
@@ -94,12 +126,16 @@ class QueueManager:
                 format_id=item.get("format_id"),
             )
             item["title"] = info.get("title", "Unknown") if isinstance(info, dict) else "Unknown"
-            item["status"] = "done"
-            self._on_item_update(item, "done")
+            if item.get("cancelled"):
+                item["status"] = "cancelled"
+                item["error"] = "Cancelled by user"
+                self._on_item_update(item, "cancelled")
+            else:
+                item["status"] = "done"
+                self._on_item_update(item, "done")
         except Exception as e:
-            item["status"] = "error"
-            item["error"] = str(e)
-            self._on_item_update(item, "error")
+            _classify_error(e, item)
+            self._on_item_update(item, item["status"])
             raise
 
     def stop(self):

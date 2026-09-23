@@ -1,7 +1,7 @@
 import flet as ft
 import logging
 
-from ui.components import build_app_bar
+from ui.components import build_app_bar, snack
 
 
 log = logging.getLogger("downloader")
@@ -63,6 +63,22 @@ class SettingsView(ft.View):
             selectable=True,
         )
 
+        self.cookies_browser_dd = ft.Dropdown(
+            label="Auto-fill cookies from browser",
+            width=240,
+            options=[
+                ft.dropdown.Option("", "None (use file above)"),
+                ft.dropdown.Option("chrome"),
+                ft.dropdown.Option("firefox"),
+                ft.dropdown.Option("edge"),
+                ft.dropdown.Option("brave"),
+                ft.dropdown.Option("opera"),
+                ft.dropdown.Option("vivaldi"),
+                ft.dropdown.Option("safari"),
+            ],
+            value=self.settings.get("cookies_from_browser", ""),
+        )
+
         self.concurrency_dd = ft.Dropdown(
             label="Concurrent downloads",
             width=240,
@@ -101,6 +117,23 @@ class SettingsView(ft.View):
                         self.proxy_input,
                     ]),
                     self._section("Cookies (for age-restricted / login content)", [
+                        ft.Text(
+                            "Recommended: pick your browser below. As long as you're logged into "
+                            "Instagram/etc there, cookies are read fresh on every download - "
+                            "nothing to re-export when a session expires.",
+                            size=11,
+                            italic=True,
+                        ),
+                        self.cookies_browser_dd,
+                        ft.Text(
+                            "Close the browser fully before downloading if you see a "
+                            "'database is locked' cookie error (Chrome/Edge/Brave lock their "
+                            "cookie file while running).",
+                            size=11,
+                            italic=True,
+                        ),
+                        ft.Divider(height=1),
+                        ft.Text("Or use a manually exported cookies.txt file instead:", size=12),
                         ft.Row(
                             [
                                 self.cookies_path_text,
@@ -116,11 +149,6 @@ class SettingsView(ft.View):
                                 ),
                             ],
                             spacing=10,
-                        ),
-                        ft.Text(
-                            "Export cookies from your browser using the 'Get cookies.txt LOCALLY' extension.",
-                            size=11,
-                            italic=True,
                         ),
                     ]),
                     self._section("Maintenance", [
@@ -165,7 +193,8 @@ class SettingsView(ft.View):
 
     def _build(self):
         self.appbar = build_app_bar(
-            self._page, "Settings", self._page.route, self.app_state.navigate
+            self._page, "Settings", self._page.route, self.app_state.navigate,
+            on_back=lambda: self.app_state.navigate("/"),
         )
         self.controls = [
             ft.Container(
@@ -236,14 +265,13 @@ class SettingsView(ft.View):
         self.settings["default_quality"] = self.default_quality_dd.value or "720p"
         self.settings["theme"] = self.theme_dd.value or "light"
         self.settings["proxy"] = self.proxy_input.value or ""
+        self.settings["cookies_from_browser"] = self.cookies_browser_dd.value or ""
         self.settings["max_concurrent"] = int(self.concurrency_dd.value or 1)
         self.settings["concurrent_downloads"] = self.settings["max_concurrent"]
         settings_manager.save(self.settings)
         self.app_state.apply_settings(self.settings)
-        if hasattr(self.page, "show_snack_bar"):
-            self.page.show_snack_bar(ft.SnackBar(content=ft.Text("Settings saved.")))
-        else:
-            log.info("settings saved")
+        snack(self.page, "Settings saved.")
+        log.info("settings saved")
 
     def _on_discard(self, e):
         self.settings = self.app_state.settings.copy()
@@ -252,6 +280,6 @@ class SettingsView(ft.View):
         self.theme_dd.value = self.settings.get("theme", "light")
         self.proxy_input.value = self.settings.get("proxy", "")
         self.cookies_path_text.value = self.settings.get("cookiefile", "") or "None"
+        self.cookies_browser_dd.value = self.settings.get("cookies_from_browser", "")
         self.concurrency_dd.value = str(self.settings.get("max_concurrent", 1))
-        if hasattr(self.page, "show_snack_bar"):
-            self.page.show_snack_bar(ft.SnackBar(content=ft.Text("Reverted to saved settings.")))
+        snack(self.page, "Reverted to saved settings.")
