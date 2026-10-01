@@ -8,11 +8,13 @@ HISTORY_FILE = "history.json"
 def load_history():
     if not os.path.exists(HISTORY_FILE):
         return []
-    try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
+    for enc in ("utf-8", "latin-1"):
+        try:
+            with open(HISTORY_FILE, "r", encoding=enc) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            continue
+    return []
 
 
 def add_entry(title, url, quality, file_path, size_mb):

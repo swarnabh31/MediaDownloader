@@ -95,9 +95,9 @@ class AppState:
         # Theme is handled separately — page.theme_mode doesn't change mid-session in Flet desktop
         if self._main_view is not None:
             try:
-                self._main_view.quality_dropdown.value = settings.get("default_quality", "720p")
+                self._main_view.input_panel.quality_dropdown.value = settings.get("default_quality", "720p")
                 if self.page is not None:
-                    self._main_view.quality_dropdown.update()
+                    self._main_view.input_panel.quality_dropdown.update()
             except Exception:
                 pass
         if self.page is not None:
@@ -121,9 +121,9 @@ class AppState:
             pass
         if self._main_view is not None:
             try:
-                self._main_view.quality_dropdown.value = self.settings.get("default_quality", "720p")
+                self._main_view.input_panel.quality_dropdown.value = self.settings.get("default_quality", "720p")
                 if self.page is not None:
-                    self._main_view.quality_dropdown.update()
+                    self._main_view.input_panel.quality_dropdown.update()
             except Exception:
                 pass
         if self.page is not None:
@@ -142,8 +142,8 @@ def main(page: ft.Page):
     app_state = AppState(page)
 
     page.title = "Media Downloader"
-    page.window_width = 980
-    page.window_height = 720
+    page.window_width = 1100
+    page.window_height = 800
     page.window_min_width = 760
     page.window_min_height = 560
     page.padding = 0
@@ -175,15 +175,27 @@ def main(page: ft.Page):
     page.on_route_change = route_change
     page.on_view_pop = view_pop
 
+    def on_resize(e):
+        active = page.views[-1] if page.views else None
+        if not isinstance(active, MainView):
+            return
+        try:
+            w = float(getattr(e, "width", 0) or 0) or page.width
+            active._relayout(w)
+            page.update()
+        except Exception:
+            log.exception("on_resize failed")
+
+    page.on_resize = on_resize
+
     def on_keyboard(e: ft.KeyboardEvent):
         active = page.views[-1] if page.views else None
         if not isinstance(active, MainView):
             return
-        if e.key == "Enter" and not e.shift:
-            active._on_add_click(None)
-        elif hasattr(e, 'ctrl') and e.ctrl and (e.key == "L" or e.key == "l"):
-            active.url_input.value = ""
-            active.url_input.update()
+        # Enter in the URL field triggers Add to Queue (via on_submit on the field)
+        if hasattr(e, 'ctrl') and e.ctrl and (e.key == "L" or e.key == "l"):
+            active.input_panel.url_input.value = ""
+            active.input_panel.url_input.update()
         elif hasattr(e, 'ctrl') and e.ctrl and (e.key == "P" or e.key == "p"):
             active._on_preview_click(None)
         elif hasattr(e, 'ctrl') and e.ctrl and (e.key == "H" or e.key == "h"):
