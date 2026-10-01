@@ -1,4 +1,4 @@
-# 🎬 Video Downloader
+# 🎬 Media Downloader
 
 A clean, open-source desktop application to download videos and audio from **1800+ websites** — YouTube, Vimeo, Dailymotion, TikTok, SoundCloud, Rumble, and more.
 
